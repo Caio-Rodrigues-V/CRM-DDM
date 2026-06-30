@@ -61,15 +61,26 @@ export async function POST(request: Request) {
       console.log('[waha/webhook] Message payload:', JSON.stringify(payload))
       const { id: messageId, timestamp, from, to, body: textBody, fromMe, hasMedia, type } = payload
       
-      if (!from || !to) {
-        console.warn('[waha/webhook] Ignored message due to missing from/to JID')
-        return NextResponse.json({ success: true, message: 'Ignored message without sender/recipient JID' })
+      let participantJid = fromMe ? to : from
+
+      // Extract real phone JID if WAHA is sending a LID (WhatsApp internal ID)
+      const senderAlt = payload._data?.Info?.SenderAlt
+      const recipientAlt = payload._data?.Info?.RecipientAlt
+
+      if (!fromMe && senderAlt && (senderAlt.endsWith('@s.whatsapp.net') || senderAlt.endsWith('@c.us'))) {
+        participantJid = senderAlt
+      } else if (fromMe && recipientAlt && (recipientAlt.endsWith('@s.whatsapp.net') || recipientAlt.endsWith('@c.us'))) {
+        participantJid = recipientAlt
+      }
+
+      if (!participantJid) {
+        console.warn('[waha/webhook] Ignored message due to missing participant JID')
+        return NextResponse.json({ success: true, message: 'Ignored message without participant JID' })
       }
 
       // Determine the contact phone number
       // Inbound: from JID (e.g. 5511999999999@c.us)
       // Outbound: to JID
-      const participantJid = fromMe ? to : from
       const rawPhone = participantJid.split('@')[0]
       const phone = `+${rawPhone}` // Normalize to E.164 format with + prefix
 
