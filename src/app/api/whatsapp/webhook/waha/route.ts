@@ -58,6 +58,10 @@ export async function POST(request: Request) {
     if (event === 'message' || event === 'message.any') {
       const { id: messageId, timestamp, from, to, body: textBody, fromMe, hasMedia, type } = payload
       
+      if (!from || !to) {
+        return NextResponse.json({ success: true, message: 'Ignored message without sender/recipient JID' })
+      }
+
       // Determine the contact phone number
       // Inbound: from JID (e.g. 5511999999999@c.us)
       // Outbound: to JID
@@ -71,8 +75,8 @@ export async function POST(request: Request) {
       if (
         from === 'status@broadcast' || 
         to === 'status@broadcast' ||
-        from.endsWith('@g.us') ||
-        to.endsWith('@g.us')
+        (from && from.endsWith('@g.us')) ||
+        (to && to.endsWith('@g.us'))
       ) {
         return NextResponse.json({ success: true, message: 'Ignored group or status broadcast update' })
       }
