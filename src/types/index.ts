@@ -153,6 +153,7 @@ export interface Conversation {
   last_message_text?: string;
   last_message_at?: string;
   unread_count: number;
+  sentiment?: 'positive' | 'neutral' | 'negative' | 'mixed' | 'unknown';
   created_at: string;
   updated_at: string;
   contact?: Contact;
@@ -224,6 +225,10 @@ export interface WhatsAppConfig {
   subscribed_apps_at?: string;
   /** Last error from /register; cleared on success. */
   last_registration_error?: string;
+  provider?: 'meta' | 'waha';
+  waha_url?: string;
+  waha_session?: string;
+  waha_api_key?: string;
 }
 
 // Raw Meta status enum. We persist this verbatim from Meta (sync + webhook)

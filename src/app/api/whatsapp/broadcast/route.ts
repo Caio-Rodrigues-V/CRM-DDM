@@ -5,6 +5,10 @@ import { decrypt } from '@/lib/whatsapp/encryption'
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder'
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard'
 import {
+  sendWahaTextMessage,
+  sendWahaMediaMessage,
+} from '@/lib/whatsapp/waha-api'
+import {
   sanitizePhoneForMeta,
   isValidE164,
   phoneVariants,
@@ -23,38 +27,9 @@ interface BroadcastResult {
   error?: string
 }
 
-/**
- * Two input shapes are accepted:
- *
- *   NEW (preferred — supports per-recipient variable substitution):
- *     {
- *       recipients: Array<{ phone: string; params: string[] }>,
- *       template_name, template_language
- *     }
- *
- *   LEGACY (all phones receive the same params — kept so existing
- *   callers don't break):
- *     {
- *       phone_numbers: string[],
- *       template_params: string[],
- *       template_name, template_language
- *     }
- *
- * Previous implementation only supported the legacy shape, and the
- * sending hook was forced to ship every batch with `templateParams[0]`
- * — meaning every recipient got contact-0's personalization. The new
- * shape is what actually fixes that.
- */
 interface NewRecipient {
   phone: string
-  /** Body variable values, one per {{N}}. Legacy field. */
   params?: string[]
-  /**
-   * Structured per-send values (header text variable, media URL
-   * override, URL/COPY_CODE button values). When set, takes
-   * precedence over `params` for the body too — see
-   * sendTemplateMessage for the merge rules.
-   */
   messageParams?: SendTimeParams
 }
 
@@ -71,18 +46,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Per-user broadcast budget. Note: this limits how often a user
-    // can *start* a campaign, not how many messages go out inside
-    // one — the fan-out loop below runs without additional gating.
     const limit = checkRateLimit(`broadcast:${user.id}`, RATE_LIMITS.broadcast)
     if (!limit.success) {
       return rateLimitResponse(limit)
     }
 
-    // Resolve the caller's account_id. whatsapp_config + templates
-    // + broadcasts are all account-scoped post-multi-user, so the
-    // old `.eq('user_id', user.id)` filters miss every row created
-    // by a teammate.
     const { data: profile } = await supabase
       .from('profiles')
       .select('account_id')
@@ -105,7 +73,6 @@ export async function POST(request: Request) {
       template_params,
     } = body
 
-    // Normalize to a list of {phone, params} regardless of shape.
     let recipients: NewRecipient[]
     if (Array.isArray(newRecipients) && newRecipients.length > 0) {
       recipients = newRecipients
@@ -150,13 +117,15 @@ export async function POST(request: Request) {
       )
     }
 
-    const accessToken = decrypt(config.access_token)
+    const isWaha = config.provider === 'waha'
+    const wahaConfig = isWaha ? {
+      waha_url: config.waha_url,
+      waha_session: config.waha_session,
+      waha_api_key: config.waha_api_key,
+    } : null
 
-    // Load the template row once so sendTemplateMessage can build
-    // header + button components on each iteration. Loading inside
-    // the loop would N+1 against Supabase for every recipient.
-    // Guard against a malformed local row crashing every send in
-    // the loop with the same opaque TypeError — fail loudly once.
+    const accessToken = isWaha ? '' : decrypt(config.access_token)
+
     const { data: rawTemplateRow } = await supabase
       .from('message_templates')
       .select('*')
@@ -192,36 +161,67 @@ export async function POST(request: Request) {
         continue
       }
 
-      // Retry with phone variants on "not in allowed list" so numbers
-      // that differ only in a trunk-prefix 0 still reach recipients.
       const variants = phoneVariants(sanitized)
       let sentMessageId: string | null = null
       let lastError: string | null = null
 
       for (const variant of variants) {
         try {
-          const result = await sendTemplateMessage({
-            phoneNumberId: config.phone_number_id,
-            accessToken,
-            to: variant,
-            templateName: template_name,
-            language: template_language || 'en_US',
-            template: templateRow ?? undefined,
-            messageParams: recipient.messageParams,
-            params: recipient.params ?? [],
-          })
-          sentMessageId = result.messageId
-          lastError = null
-          break
+          if (isWaha) {
+            let text = `Template: ${template_name}`
+            if (templateRow) {
+              let bodyText = templateRow.body_text
+              const params = recipient.params || []
+              params.forEach((param: any, idx: number) => {
+                const val = typeof param === 'string' ? param : (param.text || '')
+                bodyText = bodyText.replace(new RegExp(`\\{\\{${idx + 1}\\}\\}`, 'g'), val)
+              })
+              text = bodyText
+            }
+            const headerMediaUrl = recipient.messageParams?.headerMediaUrl
+            if (headerMediaUrl && templateRow?.header_type && ['image', 'video', 'document', 'audio'].includes(templateRow.header_type)) {
+              const result = await sendWahaMediaMessage(
+                wahaConfig!,
+                variant,
+                headerMediaUrl,
+                templateRow.header_type as any,
+                'media',
+                text
+              )
+              sentMessageId = result.messageId
+            } else {
+              const result = await sendWahaTextMessage(wahaConfig!, variant, text)
+              sentMessageId = result.messageId
+            }
+            lastError = null
+            break
+          } else {
+            const result = await sendTemplateMessage({
+              phoneNumberId: config.phone_number_id,
+              accessToken,
+              to: variant,
+              templateName: template_name,
+              language: template_language || 'en_US',
+              template: templateRow ?? undefined,
+              messageParams: recipient.messageParams,
+              params: recipient.params ?? [],
+            })
+            sentMessageId = result.messageId
+            lastError = null
+            break
+          }
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : 'Unknown error'
+          if (isWaha) {
+            lastError = errorMessage
+            break
+          }
           if (!isRecipientNotAllowedError(errorMessage)) {
             lastError = errorMessage
             break
           }
           lastError = errorMessage
-          // retry with next variant
         }
       }
 

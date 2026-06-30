@@ -39,11 +39,11 @@ const STATUS_COLORS: Record<ConversationStatus, string> = {
 type InboxFilter = ConversationStatus | "all" | "unread";
 
 const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = [
-  { label: "All", value: "all" },
-  { label: "Unread", value: "unread" },
-  { label: "Open", value: "open" },
-  { label: "Pending", value: "pending" },
-  { label: "Closed", value: "closed" },
+  { label: "Todos", value: "all" },
+  { label: "Não lidos", value: "unread" },
+  { label: "Abertos", value: "open" },
+  { label: "Pendentes", value: "pending" },
+  { label: "Fechados", value: "closed" },
 ];
 
 export function ConversationList({
@@ -160,7 +160,7 @@ export function ConversationList({
           <Input
             value={search}
             onChange={handleSearchChange}
-            placeholder="Search conversations..."
+            placeholder="Buscar conversas..."
             className="border-border bg-muted pl-9 text-sm text-foreground placeholder-muted-foreground focus:border-primary/50"
           />
         </div>
@@ -205,7 +205,7 @@ export function ConversationList({
           </div>
         ) : filtered.length === 0 ? (
           <div className="px-4 py-12 text-center">
-            <p className="text-sm text-muted-foreground">No conversations found</p>
+            <p className="text-sm text-muted-foreground">Nenhuma conversa encontrada</p>
           </div>
         ) : (
           <div className="flex flex-col">
@@ -230,13 +230,20 @@ interface ConversationItemProps {
   onSelect: (conversation: Conversation) => void;
 }
 
+const SENTIMENT_ICONS: Record<string, { emoji: string; color: string; label: string }> = {
+  positive: { emoji: "😊", color: "text-emerald-500", label: "Sentimento: Positivo" },
+  neutral: { emoji: "😐", color: "text-slate-400", label: "Sentimento: Neutro" },
+  negative: { emoji: "😠", color: "text-rose-500", label: "Sentimento: Negativo" },
+  mixed: { emoji: "🧐", color: "text-amber-500", label: "Sentimento: Misto" },
+};
+
 function ConversationItem({
   conversation,
   isActive,
   onSelect,
 }: ConversationItemProps) {
   const contact = conversation.contact;
-  const displayName = contact?.name || contact?.phone || "Unknown";
+  const displayName = contact?.name || contact?.phone || "Desconhecido";
   const initials = displayName.charAt(0).toUpperCase();
 
   const handleClick = useCallback(() => {
@@ -247,6 +254,13 @@ function ConversationItem({
     ? formatDistanceToNow(new Date(conversation.last_message_at), {
         addSuffix: false,
       })
+        .replace("about", "")
+        .replace("less than a minute", "agora")
+        .replace("minute", "min")
+        .replace("hours", "h")
+        .replace("hour", "h")
+        .replace("days", "d")
+        .replace("day", "d")
     : "";
 
   return (
@@ -280,9 +294,19 @@ function ConversationItem({
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
           <p className="truncate text-xs text-muted-foreground">
-            {conversation.last_message_text || "No messages yet"}
+            {conversation.last_message_text || "Nenhuma mensagem ainda"}
           </p>
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-2">
+            {/* Sentiment Emoji */}
+            {conversation.sentiment && conversation.sentiment !== "unknown" && (
+              <span
+                className={cn("text-xs leading-none select-none", SENTIMENT_ICONS[conversation.sentiment]?.color)}
+                title={SENTIMENT_ICONS[conversation.sentiment]?.label}
+              >
+                {SENTIMENT_ICONS[conversation.sentiment]?.emoji}
+              </span>
+            )}
+
             {conversation.unread_count > 0 && (
               <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
                 {conversation.unread_count}

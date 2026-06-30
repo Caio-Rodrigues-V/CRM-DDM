@@ -41,12 +41,10 @@ export function SettingsOverview({
 
   const [counts, setCounts] = useState<OverviewCounts | null>(null);
   const [countsLoading, setCountsLoading] = useState(true);
-  // WhatsApp status is tracked separately: its health check decrypts the
-  // token and pings Meta, which is far slower than the cheap count
-  // queries. Gating it independently keeps a slow/flaky Meta round-trip
-  // from blanking the rest of the landing.
   const [whatsapp, setWhatsapp] = useState<WhatsAppStatus | null>(null);
   const [whatsappLoading, setWhatsappLoading] = useState(true);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiLoading, setAiLoading] = useState(true);
 
   useEffect(() => {
     if (!user || !accountId) return;
@@ -113,23 +111,33 @@ export function SettingsOverview({
       setCountsLoading(false);
     })();
 
-    // WhatsApp connection status — slower, independent.
+    // WhatsApp connection status & AI Config — slower, independent.
     (async () => {
       setWhatsappLoading(true);
-      const [row, health] = await Promise.allSettled([
+      setAiLoading(true);
+      const [row, health, aiRow] = await Promise.allSettled([
         supabase
           .from('whatsapp_config')
           .select('phone_number_id')
           .eq('account_id', acctId)
           .maybeSingle(),
         fetch('/api/whatsapp/config', { cache: 'no-store' }).then((r) => r.json()),
+        supabase
+          .from('ai_config')
+          .select('enabled')
+          .eq('account_id', acctId)
+          .maybeSingle(),
       ]);
       if (cancelled) return;
       setWhatsapp({
         configured: row.status === 'fulfilled' && !!row.value.data?.phone_number_id,
         connected: health.status === 'fulfilled' && !!health.value?.connected,
       });
+      if (aiRow.status === 'fulfilled' && aiRow.value?.data) {
+        setAiEnabled(!!aiRow.value.data.enabled);
+      }
       setWhatsappLoading(false);
+      setAiLoading(false);
     })();
 
     return () => {
@@ -137,7 +145,7 @@ export function SettingsOverview({
     };
   }, [user, accountId, canManageMembers]);
 
-  const displayName = profile?.full_name || profile?.email || 'Your account';
+  const displayName = profile?.full_name || profile?.email || 'Sua conta';
   const initial = (profile?.full_name || profile?.email || 'U').charAt(0).toUpperCase();
   const roleMeta = accountRole ? ROLE_META[accountRole] : null;
   const RoleIcon = roleMeta?.icon;
@@ -158,14 +166,14 @@ export function SettingsOverview({
       section: 'whatsapp',
       loading: whatsappLoading,
       subtitle: !whatsapp?.configured ? (
-        'Not set up yet'
+        'Não configurado'
       ) : whatsapp.connected ? (
         <>
-          <StatusDot tone="ok" /> Connected
+          <StatusDot tone="ok" /> Conectado
         </>
       ) : (
         <>
-          <StatusDot tone="muted" /> Needs reconnecting
+          <StatusDot tone="muted" /> Necessita reconexão
         </>
       ),
     },
@@ -174,12 +182,12 @@ export function SettingsOverview({
       loading: countsLoading,
       subtitle:
         counts?.members == null
-          ? 'View team members'
-          : `${counts.members} member${counts.members === 1 ? '' : 's'}${
+          ? 'Ver membros da equipe'
+          : `${counts.members} membro${counts.members === 1 ? '' : 's'}${
               counts.pendingInvites
-                ? ` · ${counts.pendingInvites} pending invite${
+                ? ` · ${counts.pendingInvites} convite${
                     counts.pendingInvites === 1 ? '' : 's'
-                  }`
+                  } pendente${counts.pendingInvites === 1 ? '' : 's'}`
                 : ''
             }`,
     },
@@ -188,10 +196,10 @@ export function SettingsOverview({
       loading: countsLoading,
       subtitle:
         counts?.templates == null
-          ? 'Manage message templates'
-          : `${counts.templates} template${counts.templates === 1 ? '' : 's'}${
+          ? 'Gerenciar modelos de mensagens'
+          : `${counts.templates} modelo${counts.templates === 1 ? '' : 's'}${
               counts.templatesPending
-                ? ` · ${counts.templatesPending} pending review`
+                ? ` · ${counts.templatesPending} aguardando revisão`
                 : ''
             }`,
     },
@@ -205,15 +213,20 @@ export function SettingsOverview({
       loading: countsLoading,
       subtitle:
         counts?.tags == null && counts?.customFields == null
-          ? 'Tags and custom fields'
+          ? 'Tags e campos personalizados'
           : `${counts?.tags ?? 0} tag${counts?.tags === 1 ? '' : 's'} · ${
               counts?.customFields ?? 0
-            } custom field${counts?.customFields === 1 ? '' : 's'}`,
+            } campo${counts?.customFields === 1 ? '' : 's'} personalizado${counts?.customFields === 1 ? '' : 's'}`,
     },
     {
       section: 'appearance',
       loading: false,
-      subtitle: `${cap(mode)} mode · ${themeName} accent`,
+      subtitle: `Modo ${mode === 'dark' ? 'escuro' : mode === 'light' ? 'claro' : mode} · destaque ${themeName}`,
+    },
+    {
+      section: 'ai',
+      loading: aiLoading,
+      subtitle: aiEnabled ? 'Ativo e respondendo' : 'Desativado',
     },
   ];
 
@@ -272,7 +285,7 @@ export function SettingsOverview({
                 <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                   {loading ? (
                     <>
-                      <Loader2 className="size-3 animate-spin" /> Loading…
+                      <Loader2 className="size-3 animate-spin" /> Carregando…
                     </>
                   ) : (
                     subtitle

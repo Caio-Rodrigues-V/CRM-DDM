@@ -6,6 +6,10 @@ import {
   sendMediaMessage,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api'
+import {
+  sendWahaTextMessage,
+  sendWahaMediaMessage,
+} from '@/lib/whatsapp/waha-api'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import {
@@ -246,7 +250,7 @@ export async function POST(request: Request) {
         .from('whatsapp_config')
         .update({ access_token: encrypt(accessToken) })
         .eq('id', config.id)
-        .then(({ error }) => {
+        .then(({ error }: { error: any }) => {
           if (error) {
             console.warn(
               '[whatsapp/send] access_token GCM upgrade failed:',
@@ -327,6 +331,47 @@ export async function POST(request: Request) {
     }
 
     const attempt = async (phone: string): Promise<string> => {
+      if (config.provider === 'waha') {
+        const wahaConfig = {
+          waha_url: config.waha_url,
+          waha_session: config.waha_session,
+          waha_api_key: config.waha_api_key,
+        }
+        if (message_type === 'template') {
+          let text = `Template: ${template_name}`
+          if (templateRow) {
+            let bodyText = templateRow.body_text
+            const params = template_message_params?.body?.parameters || template_params || []
+            params.forEach((param: any, idx: number) => {
+              const val = typeof param === 'string' ? param : (param.text || '')
+              bodyText = bodyText.replace(new RegExp(`\\{\\{${idx + 1}\\}\\}`, 'g'), val)
+            })
+            text = bodyText
+          }
+          const result = await sendWahaTextMessage(wahaConfig, phone, text, contextMessageId)
+          return result.messageId
+        }
+        if (isMediaKind) {
+          const result = await sendWahaMediaMessage(
+            wahaConfig,
+            phone,
+            media_url,
+            message_type as MediaKind,
+            filename || '',
+            content_text || undefined
+          )
+          return result.messageId
+        }
+        const result = await sendWahaTextMessage(
+          wahaConfig,
+          phone,
+          content_text,
+          contextMessageId
+        )
+        return result.messageId
+      }
+
+      // Meta Cloud API
       if (message_type === 'template') {
         const result = await sendTemplateMessage({
           phoneNumberId: config.phone_number_id,
@@ -336,17 +381,12 @@ export async function POST(request: Request) {
           language: template_language || 'en_US',
           template: templateRow ?? undefined,
           messageParams: template_message_params ?? undefined,
-          // Legacy body-only fallback — only consulted when
-          // messageParams.body isn't set.
           params: template_params || [],
           contextMessageId,
         })
         return result.messageId
       }
       if (isMediaKind) {
-        // content_text doubles as the caption (ignored for audio inside
-        // sendMediaMessage). filename surfaces in the recipient's chat
-        // for documents only.
         const result = await sendMediaMessage({
           phoneNumberId: config.phone_number_id,
           accessToken,
@@ -381,9 +421,10 @@ export async function POST(request: Request) {
           break
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
-          // Only retry when the failure is specifically that the
-          // recipient isn't in Meta's allowed list. Any other error
-          // (bad token, invalid template, etc.) bubbles up immediately.
+          if (config.provider === 'waha') {
+            // Re-throw WAHA errors directly, do not retry phone variants if they are not sandbox related
+            throw err
+          }
           if (!isRecipientNotAllowedError(message)) {
             throw err
           }
@@ -394,10 +435,10 @@ export async function POST(request: Request) {
 
       if (lastError) throw lastError
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown Meta API error'
-      console.error('Meta API send failed for all variants:', message)
+      const message = err instanceof Error ? err.message : 'Unknown API error'
+      console.error(`${config.provider === 'waha' ? 'WAHA' : 'Meta'} API send failed:`, message)
       return NextResponse.json(
-        { error: `Meta API error: ${message}` },
+        { error: `${config.provider === 'waha' ? 'WAHA' : 'Meta'} API error: ${message}` },
         { status: 502 }
       )
     }

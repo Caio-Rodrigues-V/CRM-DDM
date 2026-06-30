@@ -10,7 +10,12 @@ export function supabaseAdmin(): SupabaseClient {
     _adminClient = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    )
+      {
+        db: {
+          schema: 'wacrm',
+        },
+      }
+    ) as any
   }
-  return _adminClient
+  return _adminClient!
 }

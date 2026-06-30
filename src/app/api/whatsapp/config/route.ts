@@ -7,6 +7,10 @@ import {
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
+import {
+  getWahaSessionStatus,
+  startWahaSession,
+} from '@/lib/whatsapp/waha-api'
 
 /**
  * Resolve the caller's account_id from their profile. Inlined here
@@ -41,8 +45,13 @@ function supabaseAdmin() {
   if (!_adminClient) {
     _adminClient = createAdminClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        db: {
+          schema: 'wacrm',
+        },
+      }
+    ) as any
   }
   return _adminClient
 }
@@ -87,7 +96,7 @@ export async function GET() {
 
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
-      .select('phone_number_id, access_token, status')
+      .select('*')
       .eq('account_id', accountId)
       .maybeSingle()
 
@@ -108,6 +117,45 @@ export async function GET() {
         },
         { status: 200 }
       )
+    }
+
+    if (config.provider === 'waha') {
+      const wahaConfig = {
+        waha_url: config.waha_url,
+        waha_session: config.waha_session,
+        waha_api_key: config.waha_api_key ? decrypt(config.waha_api_key) : null,
+      }
+      try {
+        const status = await getWahaSessionStatus(wahaConfig)
+        if (status === 'WORKING') {
+          return NextResponse.json({
+            connected: true,
+            provider: 'waha',
+            session_status: status,
+            phone_info: {
+              id: config.waha_session,
+              display_phone_number: config.waha_session,
+              verified_name: `WAHA: ${config.waha_session}`
+            }
+          })
+        } else {
+          return NextResponse.json({
+            connected: false,
+            provider: 'waha',
+            session_status: status,
+            reason: 'waha_not_working',
+            message: `WAHA Session is not connected (Current Status: ${status}). Go to settings to scan the QR Code.`,
+          })
+        }
+      } catch (err: any) {
+        return NextResponse.json({
+          connected: false,
+          provider: 'waha',
+          session_status: 'UNKNOWN',
+          reason: 'waha_api_error',
+          message: `Could not connect to WAHA server at ${config.waha_url}: ${err.message}`,
+        })
+      }
     }
 
     // Try to decrypt the stored token with the current ENCRYPTION_KEY.
@@ -185,7 +233,120 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { phone_number_id, waba_id, access_token, verify_token, pin } = body
+    const { provider = 'meta', waha_url, waha_session, waha_api_key, phone_number_id, waba_id, access_token, verify_token, pin } = body
+
+    const MASKED_TOKEN = '••••••••••••••••'
+
+    if (provider === 'waha') {
+      if (!waha_url || !waha_session) {
+        return NextResponse.json(
+          { error: 'waha_url and waha_session are required' },
+          { status: 400 }
+        )
+      }
+
+      // Check if another account has already claimed this waha_session
+      const { data: claimed, error: claimedError } = await supabaseAdmin()
+        .from('whatsapp_config')
+        .select('account_id')
+        .eq('waha_session', waha_session)
+        .neq('account_id', accountId)
+        .maybeSingle()
+
+      if (claimedError) {
+        console.error('Error checking waha_session ownership:', claimedError)
+        return NextResponse.json(
+          { error: 'Failed to validate configuration' },
+          { status: 500 }
+        )
+      }
+
+      if (claimed) {
+        return NextResponse.json(
+          {
+            error:
+              'This WAHA session is already linked to another account on this instance.',
+          },
+          { status: 409 }
+        )
+      }
+
+      // Encrypt api key if provided
+      let encryptedApiKey: string | null = null
+      if (waha_api_key && waha_api_key !== MASKED_TOKEN) {
+        try {
+          encryptedApiKey = encrypt(waha_api_key)
+        } catch (err) {
+          console.error('Encryption failed:', err)
+          return NextResponse.json(
+            { error: 'Failed to encrypt API key.' },
+            { status: 500 }
+          )
+        }
+      }
+
+      // Upsert configuration in DB
+      const wahaConfigObj: Record<string, any> = {
+        provider: 'waha',
+        waha_url,
+        waha_session,
+        phone_number_id: waha_session, // Map phone_number_id to session for unique check/compat
+        access_token: 'waha-placeholder', // Mock access_token for not null constraints
+        status: 'disconnected', // Initially disconnected, user starts it manually
+        account_id: accountId,
+        user_id: user.id
+      }
+
+      const { data: existing } = await supabase
+        .from('whatsapp_config')
+        .select('id, waha_api_key')
+        .eq('account_id', accountId)
+        .maybeSingle()
+
+      if (existing) {
+        if (waha_api_key === MASKED_TOKEN) {
+          wahaConfigObj.waha_api_key = existing.waha_api_key
+        } else {
+          wahaConfigObj.waha_api_key = encryptedApiKey
+        }
+
+        const { error: updateError } = await supabase
+          .from('whatsapp_config')
+          .update(wahaConfigObj)
+          .eq('id', existing.id)
+
+        if (updateError) {
+          console.error('Error updating config:', updateError)
+          return NextResponse.json({ error: updateError.message }, { status: 500 })
+        }
+      } else {
+        wahaConfigObj.waha_api_key = encryptedApiKey
+        const { error: insertError } = await supabase
+          .from('whatsapp_config')
+          .insert(wahaConfigObj)
+
+        if (insertError) {
+          console.error('Error inserting config:', insertError)
+          return NextResponse.json({ error: insertError.message }, { status: 500 })
+        }
+      }
+
+      // Auto-start the session in WAHA
+      try {
+        const rawApiKey = waha_api_key === MASKED_TOKEN && existing
+          ? (existing.waha_api_key ? decrypt(existing.waha_api_key) : null)
+          : waha_api_key
+        await startWahaSession({
+          waha_url,
+          waha_session,
+          waha_api_key: rawApiKey && rawApiKey !== MASKED_TOKEN ? rawApiKey : null
+        })
+      } catch (err) {
+        console.warn('Could not auto-start WAHA session:', err)
+      }
+
+      return NextResponse.json({ success: true, message: 'WAHA configuration saved.' })
+    }
 
     if (!access_token || !phone_number_id) {
       return NextResponse.json(

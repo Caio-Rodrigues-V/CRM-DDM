@@ -16,6 +16,7 @@ import { FieldsAndTagsPanel } from '@/components/settings/fields-and-tags-panel'
 import { DealsSettings } from '@/components/settings/deals-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
+import { AiAgentSettings } from '@/components/settings/ai-agent-settings';
 import {
   resolveSection,
   type SettingsSection,
@@ -61,17 +62,18 @@ export default function SettingsPage() {
     deals: <DealsSettings />,
     members: <MembersTab />,
     api: <ApiKeysSettings />,
+    ai: <AiAgentSettings />,
   };
 
   return (
     <div>
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
-          Settings
+          Configurações
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Everything in one place — your account and your workspace. Pick a
-          section to manage it.
+          Tudo em um só lugar — sua conta e seu espaço de trabalho. Escolha uma
+          seção para gerenciá-la.
         </p>
       </div>
 

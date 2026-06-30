@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { MessageSquare, UsersRound } from "lucide-react";
+import { DdmLogo } from "@/components/ui/ddm-logo";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless it sits under a Suspense boundary. We split the form into
@@ -74,7 +75,7 @@ function LoginPageInner() {
             {inviteToken ? (
               <UsersRound className="h-6 w-6 text-primary" />
             ) : (
-              <MessageSquare className="h-6 w-6 text-primary" />
+              <DdmLogo className="h-7 w-7 text-primary" outlineColor="oklch(from var(--primary) l c h / 0.1)" />
             )}
           </div>
           <CardTitle className="text-xl text-foreground">

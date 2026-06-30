@@ -361,17 +361,17 @@ export default function InboxPage() {
    * visibilitychange → visible is a reliable signal that we may have
    * missed events. Cheap to fire; the children dedupe on their own.
    */
-  useEffect(() => {
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        setResyncToken((n) => n + 1);
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, []);
+  // useEffect(() => {
+  //   const onVisibility = () => {
+  //     if (document.visibilityState === "visible") {
+  //       setResyncToken((n) => n + 1);
+  //     }
+  //   };
+  //   document.addEventListener("visibilitychange", onVisibility);
+  //   return () => {
+  //     document.removeEventListener("visibilitychange", onVisibility);
+  //   };
+  // }, []);
 
   /**
    * Manual refresh trigger for the thread-header refresh button.
@@ -552,7 +552,7 @@ export default function InboxPage() {
         <div className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2">
           <WifiOff className="h-4 w-4 text-amber-400" />
           <p className="text-xs text-amber-400">
-            WhatsApp® is not connected. Go to Settings to connect your account.
+            WhatsApp® não está conectado. Vá em Configurações para conectar sua conta.
           </p>
         </div>
       )}

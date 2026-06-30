@@ -25,8 +25,13 @@ function supabaseAdmin() {
   if (!_adminClient) {
     _adminClient = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        db: {
+          schema: 'wacrm',
+        },
+      }
+    ) as any
   }
   return _adminClient
 }
@@ -653,6 +658,16 @@ async function processMessage(
   if (convError) {
     console.error('Error updating conversation:', convError)
   }
+
+  // Trigger AI Auto Response if the conversation is unassigned (no human agent is handling it)
+  if (!conversation.assigned_agent_id) {
+    const { handleAiAutoResponse } = await import('@/lib/ai/responder')
+    void handleAiAutoResponse(accountId, contactRecord.id, conversation.id, contentText || '')
+  }
+
+  // Trigger Sentiment and Auto-Tagging Analysis
+  const { analyzeConversationSentimentAndTags } = await import('@/lib/ai/sentiment')
+  void analyzeConversationSentimentAndTags(accountId, contactRecord.id, conversation.id)
 
   // If this contact was a recent broadcast recipient, flag the reply
   // so the broadcast's `replied_count` advances (via the aggregate
