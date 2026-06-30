@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import {
   Eye,
@@ -223,13 +223,17 @@ export function WhatsAppConfig() {
     return () => clearInterval(interval);
   }, [provider, accountId, sessionStatus, checkWahaStatus]);
 
+  const hasFetchedConfigRef = useRef(false);
   useEffect(() => {
     if (authLoading || profileLoading) return;
     if (!user || !accountId) {
       setLoading(false);
       return;
     }
-    fetchConfig(accountId);
+    if (!hasFetchedConfigRef.current) {
+      hasFetchedConfigRef.current = true;
+      fetchConfig(accountId);
+    }
   }, [authLoading, profileLoading, user, accountId, fetchConfig]);
 
   // WAHA session actions
